@@ -8,6 +8,7 @@
 #include <unordered_map>
 #include <boost/functional/hash.hpp>
 #include <future>
+#include "ThreadPool.h"
 Eigen::MatrixXd getP(int m) {
     Eigen::MatrixXd res(m,m);
     res.setZero();
@@ -208,16 +209,21 @@ void calculateCorrelationThread(std::unordered_map<std::pair<int, int>, Eigen::M
     Eigen::MatrixXd p2 = getPowerP(-s, P);
     Eigen::MatrixXd q1 = getPowerQ(n - t, Q);
     Eigen::MatrixXd q2 = getPowerQ(-t, Q);
-
+   
     L = p1 * L * q1;
     G = p1 * G * q2;
     K = p2 * K * q1;
     J = p2 * J * q2;
-
+    
+    int r = L.rows();
+    int c = L.cols();
+    if (G.rows() != r || G.cols() != c || K.rows() != r || K.cols() != c || J.rows() != r || J.cols() != c) {
+        std::cout << "Here\n";
+    }
     Eigen::MatrixXd res = L + G + K + J;
     Eigen::VectorXd v(Eigen::Map<Eigen::VectorXd>(res.data(), res.cols() * res.rows()));
     mutex.lock();
-    result.push_back(v);
+    result.emplace_back(v);
     mutex.unlock();
 }
 int main()
@@ -230,6 +236,8 @@ int main()
     const int n = N / 4;
     Eigen::Matrix<Eigen::VectorXd, Eigen::Dynamic, Eigen::Dynamic> X(M,N);
     Eigen::Matrix<Eigen::VectorXd, Eigen::Dynamic, Eigen::Dynamic> Z(m,n);
+    X.setZero();
+    Z.setZero();
     for (int i = 0; i < m ; i++) {
         for (int j = 0; j < n; j++) {
 
@@ -264,23 +272,29 @@ int main()
 
     std::unordered_map<std::pair<int, int>, Eigen::MatrixXd, boost::hash<std::pair<int, int>>> mM = constructIntegralMatrix(B, m, n);
   
-    std::vector<Eigen::VectorXd> res;
+    std::vector<Eigen::VectorXd> res = {};
     std::vector<std::thread> threads;
     
-   
+  
     std::mutex mtx;
+    const int num_threads = std::thread::hardware_concurrency();
+    ThreadPool pool(num_threads);
+    
+
     for (int i = 0; i < m; i++) {
         for (int j = 0; j < n; j++) {
-            threads.emplace_back(calculateCorrelationThread, std::ref(mM), std::ref(P), std::ref(Q), i, j, m, n, std::ref(res),std::ref(mtx));
+          
+            pool.enqueue([&mM,&P,&Q,i,j,m,n,&res,&mtx] {(
+                calculateCorrelationThread(std::ref(mM), std::ref(P), std::ref(Q), i, j, m, n, std::ref(res), std::ref(mtx)));
+                });
         }
     }
-
+   
   
-    for (auto& thread : threads) {
-        thread.join();
-    }
-    std::cout << (std::clock() - clock)/1000.0 << std::endl;
+ 
 
+    std::cout << (std::clock() - clock)/1000.0 << std::endl;
+    return 0;
 }
 
 
